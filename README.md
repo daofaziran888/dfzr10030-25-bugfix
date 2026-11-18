@@ -67,6 +67,35 @@ npm run dev
 | 数据血缘追踪 | `lineage` | 血缘关系 | 关系编号、上游节点、下游节点 |
 | 采集报告 | `report` | 采集报告 | 报告编号、采集源、统计周期 |
 
+## 采集批次指标快照
+
+采集监控与采集报告不再在读取时随机抽样，两个页面都读同一份「采集批次指标快照」
+（`backend/app/services/metrics.py`）：
+
+- 指标按采集批次汇总：成功率 = 成功量 / 终态事件数，平均延迟 = 终态事件延迟均值，
+  终态事件包括成功、失败、中断、超时。
+- 同一批次重复刷新返回同一份快照（含 `依据指纹`、`快照版本`、`修订序号`），
+  详情页、列表、报告页、监控 KPI 卡片数值一致。
+- 归口口径为**事件时间**：迟到事件只要事件时间落在原窗口内，就归入原批次并修订，
+  旧依据保留在 `历史依据` 里；窗口外的迟到事件直接拒绝并说明原因。
+- 空态批次（无事件）与存在缺失字段的批次分别是「空态」「待补数」，成功率与平均延迟
+  为空、`是否通过` 为 false，不会先给一个不可复现的完整快照。
+- 同一批次同时提交多份修改（事件补录或报告重算）时用 `expected_version` 做乐观校验，
+  只有一份落库，其余返回 `conflict: true`。
+- 报告页的「重新生成」与监控面板共用一次重算：监控快照与报告摘要同时更新，
+  指标不是「正常」的批次进入报告页的待审清单。
+
+| 接口 | 说明 |
+| --- | --- |
+| `GET /api/monitor/batches` | 全部批次快照 |
+| `GET /api/monitor/batches/{批次号}` | 单个批次快照与事件明细 |
+| `POST /api/monitor/batches/{批次号}/events` | 补录一条迟到事件（带 `expected_version`） |
+| `POST /api/monitor/batches/{批次号}/events/batch` | 同批次同时提交多份修改 |
+| `GET /api/report/reviews` | 待审清单（从当前快照派生） |
+| `POST /api/report/batches/{批次号}/regenerate` | 监控与报告共用的一次重算 |
+
+后端单测：`cd backend && .venv/bin/python -m unittest discover -s tests -v`。
+
 ## 约定
 
 - 每个模块的前端页面在 `frontend/src/views/<模块>/index.vue`，后端接口在
